@@ -27,5 +27,10 @@ terraform.tfstate.*
 *.tfstate.backup
 .pnpm-store
 
+# Sensitive files - credentials and IPs
+backend/gateway-proxy-key.txt
+backend/gateway-proxy-ip.txt
+new-gateway-ip.txt
+
 # Snyk Security Extension - AI Rules (auto-generated)
 .github/instructions/snyk_rules.instructions.md
