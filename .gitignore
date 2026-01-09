@@ -31,6 +31,13 @@ terraform.tfstate.*
 backend/gateway-proxy-key.txt
 backend/gateway-proxy-ip.txt
 new-gateway-ip.txt
+backend/gateway-logs.txt
+backend/logs/
+
+# Build artifacts
+backend/dist/
+frontend/dist/
+frontend/build/
 
 # Snyk Security Extension - AI Rules (auto-generated)
 .github/instructions/snyk_rules.instructions.md
