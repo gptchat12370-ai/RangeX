@@ -1,0 +1,28 @@
+# Security Model
+
+- **Identity & Auth**
+  - Email/password with Argon2 hashing; no plaintext secrets at rest.
+  - JWT access tokens (15m) + refresh tokens (7d); refresh revocation by password change/token rotation planned.
+  - Optional TOTP 2FA scaffolded (UI + backend secret field) for Admin/Creator expansion.
+- **RBAC**
+  - Role booleans per user (`roleSolver`, `roleCreator`, `roleAdmin`).
+  - Route protection via `AuthGuard('jwt')` + `RolesGuard`; admin endpoints locked down.
+- **Validation**
+  - Global Nest `ValidationPipe` (`whitelist`, `forbidNonWhitelisted`, `transform`).
+  - DTOs enforce password complexity, enums for resource profiles, TTL ranges, and budget sanity (soft ≤ hard).
+  - Frontend mirrors validation with Zod and react-hook-form to catch mistakes early.
+- **Safety Filters**
+  - Helmet for sensible HTTP headers.
+  - CORS restricted to configured frontend origins.
+  - Throttling guard enabled globally; auth/admin endpoints benefit from rate limiting to deter brute-force.
+  - Global exception filter returns safe, structured errors (`code`, `message`, optional `details`) without stack traces.
+- **Secrets & Encryption**
+  - Registry credentials encrypted with AES-GCM using `REGISTRY_ENCRYPTION_KEY`; decrypted only in-service when needed.
+  - No secrets committed; `.env` templates provided for local/dev.
+- **Data & Network**
+  - MySQL access via least-privilege user (`rangex_app`).
+  - Labs run in private subnets with no public IPs; gateway/VPN mediates access.
+  - Future: VPC interface endpoints for ECR/CloudWatch to avoid NAT while keeping private pulls/logging.
+- **Logging & Auditing**
+  - `AuditLog` entity for sensitive actions (budget triggers, admin operations, etc.).
+  - Prometheus/Grafana/Loki placeholders in docker-compose for metrics/log aggregation (secrets filtered, no credential logging).

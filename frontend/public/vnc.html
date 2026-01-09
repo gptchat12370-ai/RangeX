@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VNC Viewer - RangeX</title>
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            background-color: #1a1a1a;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            overflow: hidden;
+        }
+        #top-bar {
+            background-color: rgba(45, 45, 45, 0.95);
+            border-bottom: 1px solid #404040;
+            padding: 4px 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: #fff;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 30px;
+            z-index: 1000;
+            font-size: 12px;
+        }
+        #status {
+            color: #888;
+            font-size: 12px;
+        }
+        #status.connecting {
+            color: #ffa500;
+        }
+        #status.connected {
+            color: #00ff00;
+        }
+        #status.disconnected {
+            color: #ff4444;
+        }
+        #screen {
+            position: fixed;
+            top: 30px;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            width: 100%;
+            height: calc(100vh - 30px);
+            background-color: #000;
+            overflow: hidden;
+        }
+        #error-message {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: #2d2d2d;
+            border: 1px solid #ff4444;
+            border-radius: 8px;
+            padding: 30px;
+            color: #fff;
+            max-width: 600px;
+            text-align: center;
+            z-index: 2000;
+        }
+        #error-message.visible {
+            display: block;
+        }
+        .btn {
+            padding: 4px 10px;
+            background-color: #0070f3;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            margin: 2px;
+        }
+        .btn:hover {
+            background-color: #0051cc;
+        }
+        .btn-disconnect {
+            background-color: #ff4444;
+        }
+        .btn-disconnect:hover {
+            background-color: #cc0000;
+        }
+    </style>
+</head>
+<body>
+    <div id="top-bar">
+        <div>
+            <strong>RangeX VNC Viewer</strong>
+            <span id="machine-name" style="margin-left: 20px; color: #888;"></span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 20px;">
+            <span id="status" class="connecting">Connecting...</span>
+            <button id="disconnect-btn" class="btn btn-disconnect" style="display: none;">Disconnect</button>
+        </div>
+    </div>
+    <div id="screen"></div>
+    <div id="error-message">
+        <h3 style="margin-top: 0;">Connection Failed</h3>
+        <p id="error-text" style="margin: 20px 0;"></p>
+        <div>
+            <button class="btn" onclick="location.reload()">Retry</button>
+            <button class="btn" onclick="window.close()">Close</button>
+        </div>
+    </div>
+
+    <script type="module">
+        // Import noVNC as ES module from skypack CDN
+        import RFB from 'https://cdn.skypack.dev/@novnc/novnc@1.4.0/core/rfb.js';
+        
+        console.log('[VNC] NoVNC library loaded successfully');
+        
+        // Parse URL parameters
+        const params = new URLSearchParams(window.location.search);
+        const wsUrl = params.get('url');
+        const vncPassword = params.get('password') || 'vncpassword'; // Default to vncpassword if not provided
+        
+        console.log('[VNC] URL parameter:', wsUrl);
+        console.log('[VNC] Password provided:', vncPassword ? 'Yes' : 'No (using default)');
+        
+        if (!wsUrl) {
+            showError('No VNC URL provided. Please use the Connect button from the challenge page.');
+        } else {
+            // Extract machine name from URL if present
+            try {
+                const urlObj = new URL(wsUrl.replace('http://', 'ws://').replace('https://', 'wss://'));
+                const machineName = urlObj.searchParams.get('dst');
+                if (machineName) {
+                    document.getElementById('machine-name').textContent = machineName;
+                }
+            } catch (e) {
+                console.error('[VNC] Failed to parse URL:', e);
+            }
+
+            connectVNC(wsUrl, vncPassword);
+        }
+
+        function connectVNC(url, password = 'vncpassword') {
+            // Convert HTTP to WebSocket protocol
+            const wsUrl = url.replace('http://', 'ws://').replace('https://', 'wss://');
+            
+            console.log('[VNC] Connecting to:', wsUrl);
+            console.log('[VNC] Using password:', password.substring(0, 3) + '***');
+            
+            const status = document.getElementById('status');
+            const disconnectBtn = document.getElementById('disconnect-btn');
+            const screen = document.getElementById('screen');
+
+            try {
+                // Create RFB connection
+                console.log('[VNC] Creating RFB instance...');
+                const rfb = new RFB(screen, wsUrl, {
+                    credentials: { password: password },
+                    shared: true,
+                    repeaterID: '',
+                });
+
+                console.log('[VNC] RFB instance created');
+
+                // IMPORTANT: Do NOT resize the server desktop - use local scaling instead
+                rfb.resizeSession = false;  // Disable remote resize (prevents "Invalid screen layout" error)
+                rfb.scaleViewport = true;   // Scale locally to fit browser window
+                rfb.clipViewport = false;   // Don't clip viewport
+                rfb.showDotCursor = true;   // Show local cursor
+
+                // Connection events
+                rfb.addEventListener('connect', () => {
+                    console.log('[VNC] Connected successfully');
+                    status.textContent = 'Connected';
+                    status.className = 'connected';
+                    disconnectBtn.style.display = 'block';
+                });
+
+                rfb.addEventListener('disconnect', (e) => {
+                    console.log('[VNC] Disconnected:', e.detail);
+                    if (e.detail.clean) {
+                        status.textContent = 'Disconnected';
+                        status.className = 'disconnected';
+                    } else {
+                        showError(`Connection lost: ${e.detail.reason || 'Unknown error'}`);
+                    }
+                    disconnectBtn.style.display = 'none';
+                });
+
+                rfb.addEventListener('securityfailure', (e) => {
+                    console.error('[VNC] Security failure:', e.detail);
+                    showError(`Security failure: ${e.detail.reason || 'Authentication failed'}`);
+                });
+
+                rfb.addEventListener('credentialsrequired', () => {
+                    console.log('[VNC] Credentials required (none provided)');
+                });
+
+                // Disconnect button
+                disconnectBtn.onclick = () => {
+                    console.log('[VNC] User disconnecting...');
+                    rfb.disconnect();
+                    window.close();
+                };
+
+            } catch (error) {
+                console.error('[VNC] Failed to initialize:', error);
+                showError(`Failed to initialize VNC: ${error.message}`);
+            }
+        }
+
+        function showError(message) {
+            const errorDiv = document.getElementById('error-message');
+            const errorText = document.getElementById('error-text');
+            const status = document.getElementById('status');
+            
+            errorText.textContent = message;
+            errorDiv.classList.add('visible');
+            status.textContent = 'Connection Failed';
+            status.className = 'disconnected';
+        }
+    </script>
+</body>
+</html>

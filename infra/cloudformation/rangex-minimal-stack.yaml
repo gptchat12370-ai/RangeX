@@ -1,0 +1,428 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'RangeX Minimal Fargate Stack (No Secrets Manager, No CloudWatch, RM 134/month)'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, staging, prod]
+    Description: Environment name for tagging and naming
+  
+  LocalSyslogServer:
+    Type: String
+    Description: Your local syslog server IP in CIDR format (e.g., 192.168.1.100/32)
+    Default: '192.168.1.100/32'
+    AllowedPattern: '^([0-9]{1,3}\.){3}[0-9]{1,3}/32$'
+    ConstraintDescription: Must be a valid IP address in CIDR format with /32 subnet
+
+  VpcCidr:
+    Type: String
+    Default: '10.0.0.0/16'
+    Description: CIDR block for VPC
+
+Resources:
+  # ============================================================================
+  # VPC - FREE
+  # ============================================================================
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub 'rangex-${Environment}-vpc'
+        - Key: Project
+          Value: rangex
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: engineering
+
+  # ============================================================================
+  # Private Subnets - FREE
+  # ============================================================================
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub 'rangex-${Environment}-private-1'
+        - Key: Project
+          Value: rangex
+        - Key: Environment
+          Value: !Ref Environment
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub 'rangex-${Environment}-private-2'
+        - Key: Project
+          Value: rangex
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ============================================================================
+  # Route Table for Private Subnets - FREE
+  # ============================================================================
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub 'rangex-${Environment}-private-rt'
+        - Key: Project
+          Value: rangex
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+  # ============================================================================
+  # S3 Gateway VPC Endpoint - FREE (no hourly charge!)
+  # ============================================================================
+  S3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PrivateRouteTable
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action:
+              - s3:GetObject
+              - s3:GetObjectVersion
+            Resource:
+              - !Sub 'arn:aws:s3:::prod-${AWS::Region}-starport-layer-bucket/*'
+
+  # ============================================================================
+  # Security Group for VPC Endpoints - FREE
+  # ============================================================================
+  VPCEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for VPC endpoints
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref FargateSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub 'rangex-${Environment}-vpce-sg'
+        - Key: Project
+          Value: rangex
+
+  # ============================================================================
+  # ECR Docker VPC Endpoint - PAID (~$7/month)
+  # ============================================================================
+  ECRDkrEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecr.dkr'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action:
+              - ecr:GetAuthorizationToken
+              - ecr:BatchCheckLayerAvailability
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+            Resource: '*'
+
+  # ============================================================================
+  # ECR API VPC Endpoint - PAID (~$7/month)
+  # ============================================================================
+  ECRApiEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecr.api'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action:
+              - ecr:GetAuthorizationToken
+              - ecr:DescribeRepositories
+              - ecr:DescribeImages
+              - ecr:ListImages
+            Resource: '*'
+
+  # ============================================================================
+  # Security Group for Fargate Tasks - FREE
+  # ============================================================================
+  FargateSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Fargate tasks
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        # Allow HTTPS to VPC endpoints
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          DestinationSecurityGroupId: !Ref VPCEndpointSecurityGroup
+        # Allow syslog to specific local server IP (replace with your IP)
+        # This is restricted to your local server, not 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 514
+          ToPort: 514
+          CidrIp: !Ref LocalSyslogServer  # Must be IP/32 format
+      Tags:
+        - Key: Name
+          Value: !Sub 'rangex-${Environment}-fargate-sg'
+        - Key: Project
+          Value: rangex
+
+  # ============================================================================
+  # ECS Cluster - FREE (cluster itself)
+  # ============================================================================
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub 'rangex-${Environment}'
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT  # Up to 70% savings!
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE_SPOT
+          Weight: 3  # 75% of tasks use Spot (70% cheaper)
+        - CapacityProvider: FARGATE
+          Weight: 1  # 25% use On-Demand (for critical workloads)
+      ClusterSettings:
+        - Name: containerInsights
+          Value: disabled  # Disabled because using local Prometheus/Grafana (no CloudWatch)
+      Tags:
+        - Key: Project
+          Value: rangex
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: engineering
+
+  # ============================================================================
+  # IAM Role for Task Execution - FREE
+  # ============================================================================
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'rangex-${Environment}-task-execution-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: ECRAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: '*'
+
+  # ============================================================================
+  # IAM Role for Task - FREE
+  # ============================================================================
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'rangex-${Environment}-task-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: TaskMetadataAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecs:DescribeTasks
+                  - ecs:ListTasks
+                Resource: '*'
+
+  # ============================================================================
+  # ECR Repository - PAID ($0.10/GB/month, ~$10/month)
+  # ============================================================================
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    PrEncryptionConfiguration:
+        EncryptionType: AES256  # AWS-managed encryption (FREE)
+        # For customer-managed KMS key (additional cost):
+        # EncryptionType: KMS
+        # KmsKey: !GetAtt ECRKmsKey.Arn
+      operties:
+      RepositoryName: !Sub 'rangex-${Environment}'
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: IMMUTABLE  # Production images cannot be overwritten
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 10 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Project
+          Value: rangex
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: engineering
+
+  # ============================================================================
+  # Task Definition Template - FREE (definition itself)
+  # Tasks are PAID when running: 0.25 vCPU + 0.5GB = ~$0.012/hour
+  # ============================================================================
+  TaskDefinitionTemplate:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub 'rangex-${Environment}-scenario'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: 256  # 0.25 vCPU
+      Memory: 512  # 0.5 GB
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: challenge-container
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}:latest'
+          Essential: true
+          PortMappings:
+            - ContainerPort: 80
+              Protocol: tcp
+          # LOCAL LOGGING (No CloudWatch!)
+          LogConfiguration:
+            LogDriver: syslog
+            Options:
+              syslog-address: !Sub 'tcp://${LocalSyslogServer}'
+              tag: !Sub 'rangex-{{.Name}}-${Environment}'
+          Environment:
+            - Name: ENVIRONMENT
+              Value: !Ref Environment
+            - Name: ECS_ENABLE_CONTAINER_METADATA
+              Value: 'true'
+      Tags:
+        - Key: Project
+          Value: rangex
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: engineering
+
+Outputs:
+  VPCId:
+    Description: VPC ID
+    Value: !Ref VPC
+    Export:
+      Name: !Sub '${AWS::StackName}-VPC-ID'
+
+  PrivateSubnet1Id:
+    Description: Private Subnet 1 ID
+    Value: !Ref PrivateSubnet1
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateSubnet1-ID'
+
+  PrivateSubnet2Id:
+    Description: Private Subnet 2 ID
+    Value: !Ref PrivateSubnet2
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateSubnet2-ID'
+
+  FargateSecurityGroupId:
+    Description: Fargate Security Group ID
+    Value: !Ref FargateSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-Fargate-SG-ID'
+
+  ECSClusterName:
+    Description: ECS Cluster Name
+    Value: !Ref ECSCluster
+    Export:
+      Name: !Sub '${AWS::StackName}-ECS-Cluster'
+
+  ECRRepositoryUri:
+    Description: ECR Repository URI
+    Value: !GetAtt ECRRepository.RepositoryUri
+    Export:
+      Name: !Sub '${AWS::StackName}-ECR-URI'
+
+  TaskDefinitionArn:
+    Description: Task Definition ARN
+    Value: !Ref TaskDefinitionTemplate
+
+  EstimatedMonthlyCost:
+    Description: Estimated monthly cost (RM)
+    Value: 'RM 134/month (Fargate RM60 + ECR RM10 + VPC Endpoints RM20 + Data Transfer RM8 + Local RM36)'

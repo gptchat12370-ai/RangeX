@@ -1,0 +1,46 @@
+{
+  "family": "rangex-gateway-proxy",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "arn:aws:iam::688693885048:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "gateway-proxy",
+      "image": "688693885048.dkr.ecr.ap-south-2.amazonaws.com/rangex-gateway-proxy:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 80,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "PORT",
+          "value": "80"
+        },
+        {
+          "name": "RANGEX_PROXY_KEY",
+          "value": "{{PROXY_KEY}}"
+        },
+        {
+          "name": "RANGEX_VPC_CIDR_PREFIX",
+          "value": "10."
+        },
+        {
+          "name": "RANGEX_ALLOWED_PORTS",
+          "value": "22,80,443,3389,8080,3000"
+        }
+      ],
+      "healthCheck": {
+        "command": ["CMD-SHELL", "wget -q -O - http://localhost/health || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 10
+      }
+    }
+  ]
+}

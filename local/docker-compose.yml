@@ -1,0 +1,181 @@
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rangex_root}
+      MYSQL_DATABASE: rangex
+      MYSQL_USER: rangex_app
+      MYSQL_PASSWORD: ${RANGEX_DB_PASSWORD:-changeme}
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./init-mysql.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  backend:
+    build:
+      context: ..
+      dockerfile: local/Dockerfile.backend
+    restart: unless-stopped
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: rangex_app
+      DB_PASSWORD: ${RANGEX_DB_PASSWORD:-changeme}
+      DB_NAME: rangex
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev_access_secret_change}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-dev_refresh_secret_change}
+      REGISTRY_ENCRYPTION_KEY: ${REGISTRY_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      NODE_ENV: development
+      AWS_REGION: ${AWS_REGION:-ap-southeast-1}
+      AWS_ECS_CLUSTER_NAME: ${AWS_ECS_CLUSTER_NAME:-rangex-dev}
+      AWS_ECS_SUBNET_IDS: ${AWS_ECS_SUBNET_IDS:-subnet-123,subnet-456}
+      AWS_ECS_SECURITY_GROUP_IDS: ${AWS_ECS_SECURITY_GROUP_IDS:-sg-123}
+      ASSETS_STORAGE_DRIVER: ${ASSETS_STORAGE_DRIVER:-minio}
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: "false"
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-assets}
+      ASSETS_PUBLIC_BASE_URL: ${ASSETS_PUBLIC_BASE_URL:-http://localhost:9000}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.backend.rule=PathPrefix(`/api`)"
+      - "traefik.http.services.backend.loadbalancer.server.port=3000"
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: local/Dockerfile.frontend
+      args:
+        VITE_API_BASE_URL: /api
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3001:80"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.frontend.priority=1"
+      - "traefik.http.services.frontend.loadbalancer.server.port=80"
+
+  gateway:
+    image: nginx:alpine
+    depends_on:
+      - backend
+      - frontend
+    volumes:
+      - ./gateway.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "8080:8080"
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2024-09-22T00-33-43Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 30s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.minio.rule=PathPrefix(`/minio`)"
+      - "traefik.http.services.minio.loadbalancer.server.port=9000"
+
+  minio-init:
+    image: quay.io/minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 ${MINIO_ACCESS_KEY:-minioadmin} ${MINIO_SECRET_KEY:-minioadmin}; do sleep 2; done;
+      mc mb --ignore-existing local/${MINIO_BUCKET:-assets};
+      mc anonymous set download local/${MINIO_BUCKET:-assets};
+      "
+
+  traefik:
+    image: traefik:v3.1
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--api.dashboard=true"
+    ports:
+      - "8082:80"
+      - "8081:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    profiles: ["monitoring"]
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9091:9090"
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    profiles: ["monitoring"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    ports:
+      - "3002:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+
+  loki:
+    image: grafana/loki:2.9.9
+    profiles: ["monitoring"]
+    command: -config.file=/etc/loki/config.yml
+    volumes:
+      - ./loki-config.yml:/etc/loki/config.yml:ro
+      - loki_data:/loki
+      - loki_wal:/wal
+    ports:
+      - "3101:3100"
+
+volumes:
+  mysql_data:
+  grafana_data:
+  loki_data:
+  loki_wal:
+  minio_data:

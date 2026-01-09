@@ -1,0 +1,7 @@
+# Auto-generated Dockerfile for Attacker Workstation
+# Image: kasmweb/core-kali-rolling:1.16.1-rolling-weekly
+
+FROM kasmweb/core-kali-rolling:1.16.1-rolling-weekly
+
+# Default CMD to keep container running
+CMD ["sleep", "infinity"]

@@ -1,0 +1,20 @@
+[{
+  "name": "gateway-proxy",
+  "image": "688693885048.dkr.ecr.ap-south-2.amazonaws.com/rangex-gateway-proxy:latest",
+  "essential": true,
+  "portMappings": [{"containerPort": 8080, "protocol": "tcp"}],
+  "environment": [
+    {"name": "RANGEX_VPC_CIDR_PREFIX", "value": "10."},
+    {"name": "PORT", "value": "8080"},
+    {"name": "RANGEX_PROXY_KEY", "value": "7e7a79c613cd7df96b57689c0c26e90f08cb90911aea4cfade2c723f9a28aefa"},
+    {"name": "RANGEX_ALLOWED_PORTS", "value": "22,80,443,3389,8080,3000"},
+    {"name": "RANGEX_TASK_TYPE", "value": "infra"}
+  ],
+  "healthCheck": {
+    "command": ["CMD-SHELL", "node -e \"require('http').get('http://localhost:8080/health', r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""],
+    "interval": 30,
+    "timeout": 5,
+    "retries": 3,
+    "startPeriod": 20
+  }
+}]

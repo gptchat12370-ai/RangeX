@@ -1,0 +1,25 @@
+FROM node:20 AS builder
+WORKDIR /app
+
+COPY backend/package.json ./package.json
+COPY backend/tsconfig*.json ./ 
+COPY backend/nest-cli.json ./ 
+COPY backend/src ./src
+
+RUN npm install
+RUN npm run build
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+COPY backend/package.json ./
+
+# Create uploads directory with proper permissions before switching to node user
+RUN mkdir -p /app/uploads && chown -R node:node /app
+
+USER node
+EXPOSE 3000
+CMD ["node", "dist/main.js"]

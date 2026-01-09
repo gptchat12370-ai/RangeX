@@ -1,0 +1,31 @@
+﻿{
+  "family": "rangex-gateway-proxy",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "arn:aws:iam::688693885048:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "gateway-proxy",
+      "image": "688693885048.dkr.ecr.ap-south-2.amazonaws.com/rangex-gateway-proxy:latest",
+      "essential": true,
+      "environment": [
+        {"name": "PORT", "value": "8080"},
+        {"name": "RANGEX_ALLOWED_PORTS", "value": "22,80,443,5900,6901,8080,3000,3389"},
+        {"name": "RANGEX_PROXY_KEY", "value": "7e7a79c613cd7df96b57689c0c26e90f08cb90911aea4cfade2c723f9a28aefa"},
+        {"name": "RANGEX_TASK_TYPE", "value": "infra"},
+        {"name": "RANGEX_VPC_CIDR_PREFIX", "value": "10."}
+      ],
+      "portMappings": [{"containerPort": 8080, "protocol": "tcp"}],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/rangex-gateway-proxy",
+          "awslogs-region": "ap-south-2",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}

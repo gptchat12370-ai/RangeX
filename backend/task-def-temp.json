@@ -1,0 +1,48 @@
+﻿{
+    "memory":  "512",
+    "family":  "rangex-gateway-proxy",
+    "networkMode":  "awsvpc",
+    "requiresCompatibilities":  [
+                                    "FARGATE"
+                                ],
+    "containerDefinitions":  [
+                                 {
+                                     "name":  "gateway-proxy",
+                                     "logConfiguration":  {
+                                                              "logDriver":  "awslogs",
+                                                              "options":  {
+                                                                              "awslogs-region":  "ap-south-2",
+                                                                              "awslogs-stream-prefix":  "ecs",
+                                                                              "awslogs-group":  "/ecs/rangex-gateway-proxy"
+                                                                          }
+                                                          },
+                                     "environment":  [
+                                                         {
+                                                             "value":  "10.",
+                                                             "name":  "RANGEX_VPC_CIDR_PREFIX"
+                                                         },
+                                                         {
+                                                             "value":  "8080",
+                                                             "name":  "PORT"
+                                                         },
+                                                         {
+                                                             "value":  "7e7a79c613cd7df96b57689c0c26e90f08cb90911aea4cfade2c723f9a28aefa",
+                                                             "name":  "RANGEX_PROXY_KEY"
+                                                         },
+                                                         {
+                                                             "value":  "22,80,443,3389,8080,3000",
+                                                             "name":  "RANGEX_ALLOWED_PORTS"
+                                                         }
+                                                     ],
+                                     "essential":  true,
+                                     "image":  "688693885048.dkr.ecr.ap-south-2.amazonaws.com/rangex-gateway-proxy:latest",
+                                     "portMappings":  [
+                                                          {
+                                                              "protocol":  "tcp",
+                                                              "containerPort":  8080
+                                                          }
+                                                      ]
+                                 }
+                             ],
+    "cpu":  "256"
+}

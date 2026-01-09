@@ -1,0 +1,7 @@
+# Auto-generated Dockerfile for Web Server
+# Image: vulnerables/web-dvwa:latest
+
+FROM vulnerables/web-dvwa:latest
+
+# Default CMD to keep container running
+CMD ["sleep", "infinity"]
